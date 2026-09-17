@@ -240,9 +240,12 @@ function providerMatchesKinds(providerId, kindFilter) {
   return kindFilter.some((k) => kinds.includes(k));
 }
 
-// Combo matches kindFilter when its `kind` field is in the list.
-// Combos with no kind are treated as LLM.
+// Combo matches kindFilter when its `kind` field is in the list. Service combos
+// match any capability for which they define a non-empty provider route.
 function comboMatchesKinds(combo, kindFilter) {
+  if (combo?.kind === "service") {
+    return kindFilter.some((kind) => Array.isArray(combo.routes?.[kind]) && combo.routes[kind].length > 0);
+  }
   const kind = combo?.kind || LLM_KIND;
   return kindFilter.includes(kind);
 }
@@ -312,6 +315,9 @@ export async function buildModelsList(kindFilter, options = {}) {
     };
     if (combo.kind === "webSearch" || combo.kind === "webFetch") {
       entry.kind = combo.kind;
+    } else if (combo.kind === "service") {
+      const matchingKind = kindFilter.find((kind) => Array.isArray(combo.routes?.[kind]) && combo.routes[kind].length > 0);
+      if (matchingKind && matchingKind !== LLM_KIND) entry.kind = matchingKind;
     }
     models.push(entry);
   }

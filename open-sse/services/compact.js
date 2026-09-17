@@ -8,7 +8,7 @@
  * @param {Array|Object} combosData - Array of combos or object with combos
  * @returns {string[]|null} Array of models or null if not a combo
  */
-export function getComboModelsFromData(modelStr, combosData) {
+export function getComboModelsFromData(modelStr, combosData, capability = null) {
   // Don't check if it's in provider/model format
   if (modelStr.includes("/")) return null;
   
@@ -16,9 +16,13 @@ export function getComboModelsFromData(modelStr, combosData) {
   const combos = Array.isArray(combosData) ? combosData : (combosData?.combos || []);
   
   const combo = combos.find(c => c.name === modelStr);
-  if (combo && combo.models && combo.models.length > 0) {
-    return combo.models;
-  }
+  if (!combo) return null;
+
+  // Service combos keep one public name with a provider pool per API capability.
+  const models = combo.kind === "service" && capability
+    ? combo.routes?.[capability]
+    : combo.models;
+  if (Array.isArray(models) && models.length > 0) return models;
   return null;
 }
 

@@ -82,13 +82,13 @@ export async function getModelInfo(modelStr) {
  * Check if model is a combo and get models list
  * @returns {Promise<string[]|null>} Array of models or null if not a combo
  */
-export async function getComboModels(modelStr) {
+export async function getComboModels(modelStr, capability = "llm") {
   // Only check if it's not in provider/model format
   if (modelStr.includes("/")) return null;
 
   const combo = await getComboByName(modelStr);
-  if (combo && combo.models && combo.models.length > 0) {
-    return combo.models;
-  }
+  if (!combo) return null;
+  const models = combo.kind === "service" ? combo.routes?.[capability] : combo.models;
+  if (Array.isArray(models) && models.length > 0) return models;
   return null;
 }

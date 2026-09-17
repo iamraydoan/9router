@@ -43,7 +43,10 @@ export async function PUT(request, { params }) {
     
     // Capture previous name to invalidate rotation state on rename
     const prev = await getComboById(id);
-    const combo = await updateCombo(id, body);
+    const updateData = body.kind === "service" && body.routes && typeof body.routes === "object"
+      ? { ...body, models: { routes: body.routes } }
+      : body;
+    const combo = await updateCombo(id, updateData);
     
     if (!combo) {
       return NextResponse.json({ error: "Combo not found" }, { status: 404 });

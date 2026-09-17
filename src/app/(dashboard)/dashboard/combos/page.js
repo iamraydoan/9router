@@ -8,7 +8,7 @@ import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifi
 import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModal, CapacityBadges, Select, Toggle } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
-import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -48,6 +48,7 @@ export default function CombosPage() {
   const [combos, setCombos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showServiceCreateModal, setShowServiceCreateModal] = useState(false);
   const [editingCombo, setEditingCombo] = useState(null);
   const [activeProviders, setActiveProviders] = useState([]);
   const [comboStrategies, setComboStrategies] = useState({});
@@ -72,7 +73,7 @@ export default function CombosPage() {
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       
       // Only LLM combos here - webSearch/webFetch combos belong to media-providers/web
-      if (combosRes.ok) setCombos((combosData.combos || []).filter(c => !c.kind || c.kind === "llm"));
+      if (combosRes.ok) setCombos((combosData.combos || []).filter(c => !c.kind || c.kind === "llm" || c.kind === "service"));
       if (providersRes.ok) {
         setActiveProviders(providersData.connections || []);
       }
@@ -120,6 +121,11 @@ export default function CombosPage() {
     } catch (error) {
       console.log("Error creating combo:", error);
     }
+  };
+
+  const handleCreateService = async (data) => {
+    await handleCreate(data);
+    setShowServiceCreateModal(false);
   };
 
   const handleUpdate = async (id, data) => {
@@ -207,9 +213,14 @@ export default function CombosPage() {
             <li><span className="font-medium text-text-main">Fusion</span> — queries all models in parallel, then a judge synthesizes one answer. Best quality, but costs the most: every request bills all panel models + the judge (N+1 calls)</li>
           </ul>
         </div>
-        <Button icon="add" onClick={() => setShowCreateModal(true)} className="w-full sm:w-auto whitespace-nowrap">
-          Create Combo
-        </Button>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <Button icon="add" onClick={() => setShowCreateModal(true)} className="w-full whitespace-nowrap sm:w-auto">
+            Create Combo
+          </Button>
+          <Button icon="hub" variant="outline" onClick={() => setShowServiceCreateModal(true)} className="w-full whitespace-nowrap sm:w-auto">
+            Service Combo
+          </Button>
+        </div>
       </div>
 
       {/* Combos List */}
@@ -264,15 +275,35 @@ export default function CombosPage() {
         />
       )}
 
-      {editingCombo && (
-        <ComboFormModal
-          key={editingCombo.id}
-          isOpen={!!editingCombo}
-          combo={editingCombo}
-          onClose={() => setEditingCombo(null)}
-          onSave={(data) => handleUpdate(editingCombo.id, data)}
+      {showServiceCreateModal && (
+        <ServiceComboFormModal
+          isOpen={showServiceCreateModal}
+          onClose={() => setShowServiceCreateModal(false)}
+          onSave={handleCreateService}
           activeProviders={activeProviders}
         />
+      )}
+
+      {editingCombo && (
+        editingCombo.kind === "service" ? (
+          <ServiceComboFormModal
+            key={editingCombo.id}
+            isOpen={!!editingCombo}
+            combo={editingCombo}
+            onClose={() => setEditingCombo(null)}
+            onSave={(data) => handleUpdate(editingCombo.id, data)}
+            activeProviders={activeProviders}
+          />
+        ) : (
+          <ComboFormModal
+            key={editingCombo.id}
+            isOpen={!!editingCombo}
+            combo={editingCombo}
+            onClose={() => setEditingCombo(null)}
+            onSave={(data) => handleUpdate(editingCombo.id, data)}
+            activeProviders={activeProviders}
+          />
+        )
       )}
 
       {/* Confirm Delete Modal */}
@@ -296,6 +327,9 @@ const STRATEGY_OPTIONS = [
 
 function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
+  const comboModels = Array.isArray(combo.models)
+    ? combo.models
+    : (Array.isArray(combo.routes?.llm) ? combo.routes.llm : []);
   const current = strategy.fallbackStrategy || "fallback";
   const judge = strategy.judgeModel || "";
   const isFusion = current === "fusion";
@@ -310,18 +344,18 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
           <div className="min-w-0 flex-1">
             <code className="block truncate font-mono text-sm font-medium">{combo.name}</code>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
-              {combo.models.length === 0 ? (
+              {comboModels.length === 0 ? (
                 <span className="text-xs text-text-muted italic">No models</span>
               ) : (
-                combo.models.slice(0, 3).map((model, index) => (
+                comboModels.slice(0, 3).map((model, index) => (
                   <code key={index} className="inline-flex items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs text-text-muted dark:bg-white/5">
                     <span>{model}</span>
                     <CapacityBadges caps={getCaps?.(model)} />
                   </code>
                 ))
               )}
-              {combo.models.length > 3 && (
-                <span className="text-[10px] text-text-muted">+{combo.models.length - 3} more</span>
+              {comboModels.length > 3 && (
+                <span className="text-[10px] text-text-muted">+{comboModels.length - 3} more</span>
               )}
             </div>
             {/* Fusion: judge picker (Auto = first model) */}
@@ -334,7 +368,7 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
                   title="Pick the model that fuses panel answers"
                 >
                   <span className="material-symbols-outlined text-[13px]">gavel</span>
-                  <span className="truncate">{judge || `Auto — ${combo.models[0] || "first model"}`}</span>
+                  <span className="truncate">{judge || `Auto — ${comboModels[0] || "first model"}`}</span>
                 </button>
                 {judge && (
                   <button
@@ -851,5 +885,103 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
         />
       )}
     </>
+  );
+}
+
+const SERVICE_COMBO_ROUTES = [
+  { key: "llm", label: "Chat / LLM", kindFilter: null },
+  ...["webSearch", "webFetch"].map((key) => ({
+    key,
+    label: MEDIA_PROVIDER_KINDS.find((kind) => kind.id === key)?.label || key,
+    kindFilter: key,
+  })),
+];
+
+function ServiceComboFormModal({ isOpen, combo = null, onClose, onSave, activeProviders = [] }) {
+  const [name, setName] = useState(combo?.name || "");
+  const [routes, setRoutes] = useState(() => getServiceComboRoutes(combo));
+  const [pickerKind, setPickerKind] = useState(null);
+  const [nameError, setNameError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setName(combo?.name || "");
+    setRoutes(getServiceComboRoutes(combo));
+    setNameError("");
+  }, [combo, isOpen]);
+
+  const handleSave = async () => {
+    if (!name.trim()) { setNameError("Name is required"); return; }
+    if (!VALID_NAME_REGEX.test(name.trim())) { setNameError("Only letters, numbers, -, _ and . allowed"); return; }
+    const normalizedRoutes = Object.fromEntries(Object.entries(routes).filter(([, values]) => values.length > 0));
+    if (Object.keys(normalizedRoutes).length === 0) return;
+    setSaving(true);
+    await onSave({ name: name.trim(), kind: "service", routes });
+    setSaving(false);
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={combo ? "Edit Service Combo" : "Create Service Combo"}>
+      <div className="flex flex-col gap-3">
+        <div>
+          <Input label="Public Model Name" value={name} onChange={(e) => { setName(e.target.value); setNameError(""); }} placeholder="9router-auto" error={nameError} />
+          <p className="mt-0.5 text-[10px] text-text-muted">Use this same name on chat, search, fetch and media APIs.</p>
+        </div>
+        {SERVICE_COMBO_ROUTES.map(({ key, label, kindFilter }) => (
+          <div key={key}>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <label className="text-sm font-medium">{label}</label>
+              <Button size="sm" variant="outline" icon="add" onClick={() => setPickerKind(key)}>Add</Button>
+            </div>
+            {routes[key].length === 0 ? (
+              <p className="rounded border border-dashed border-black/10 px-2 py-2 text-xs text-text-muted dark:border-white/10">No providers selected</p>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {routes[key].map((model, index) => (
+                  <div key={`${model}-${index}`} className="flex items-center justify-between gap-2 rounded bg-black/[0.03] px-2 py-1 dark:bg-white/[0.03]">
+                    <code className="min-w-0 truncate text-xs">{model}</code>
+                    <button type="button" onClick={() => setRoutes((current) => ({ ...current, [key]: current[key].filter((_, i) => i !== index) }))} className="shrink-0 text-text-muted hover:text-red-500" title="Remove">
+                      <span className="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        <div className="flex flex-col gap-2 pt-1 sm:flex-row">
+          <Button onClick={onClose} variant="ghost" fullWidth size="sm">Cancel</Button>
+          <Button onClick={handleSave} fullWidth size="sm" disabled={!name.trim() || saving}>
+            {saving ? "Saving..." : combo ? "Save" : "Create"}
+          </Button>
+        </div>
+      </div>
+      {pickerKind && (
+        <ModelSelectModal
+          isOpen={!!pickerKind}
+          onClose={() => setPickerKind(null)}
+          onSelect={(model) => {
+            const value = model?.value;
+            if (value && !routes[pickerKind].includes(value)) {
+              setRoutes((current) => ({ ...current, [pickerKind]: [...current[pickerKind], value] }));
+            }
+          }}
+          onDeselect={() => {}}
+          activeProviders={activeProviders}
+          title="Add Provider to Service Combo"
+          kindFilter={SERVICE_COMBO_ROUTES.find((route) => route.key === pickerKind)?.kindFilter || null}
+          addedModelValues={routes[pickerKind]}
+          closeOnSelect={false}
+        />
+      )}
+    </Modal>
+  );
+}
+
+function getServiceComboRoutes(combo) {
+  const storedRoutes = combo?.routes || (combo?.models && !Array.isArray(combo.models) ? combo.models.routes : null) || {};
+  return Object.fromEntries(
+    SERVICE_COMBO_ROUTES.map(({ key }) => [key, Array.isArray(storedRoutes[key]) ? storedRoutes[key] : []])
   );
 }
