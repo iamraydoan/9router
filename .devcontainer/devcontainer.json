@@ -1,0 +1,30 @@
+{
+  "name": "9Router",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "remoteUser": "node",
+  "forwardPorts": [20127],
+  "portsAttributes": {
+    "20127": {
+      "label": "9Router development server",
+      "onAutoForward": "notify"
+    }
+  },
+  "mounts": [
+    "source=9router-dev-data,target=/var/lib/9router,type=volume"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint"
+      ],
+      "settings": {
+        "eslint.workingDirectories": [
+          {
+            "mode": "location"
+          }
+        ]
+      }
+    }
+  },
+  "postCreateCommand": "sudo chown -R node:node /var/lib/9router && npm install"
+}
