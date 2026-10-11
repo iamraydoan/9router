@@ -143,6 +143,27 @@ function identityKey(credentials) {
   return "opencode:default";
 }
 
+function proxyKeyOf(credentials) {
+  const psd = credentials?.providerSpecificData || {};
+  const poolId = typeof psd.connectionProxyPoolId === "string" ? psd.connectionProxyPoolId.trim() : "";
+  if (poolId) return `pool:${poolId}`;
+  const proxyUrl = typeof psd.connectionProxyUrl === "string" ? psd.connectionProxyUrl.trim() : "";
+  if (proxyUrl && psd.connectionProxyEnabled === true) {
+    const digest = crypto.createHash("sha256").update(`proxy-url\0${proxyUrl}`).digest("hex").slice(0, 16);
+    return `url:${digest}`;
+  }
+  const relayUrl = typeof psd.vercelRelayUrl === "string" ? psd.vercelRelayUrl.trim() : "";
+  if (relayUrl) {
+    const digest = crypto.createHash("sha256").update(`proxy-relay\0${relayUrl}`).digest("hex").slice(0, 16);
+    return `relay:${digest}`;
+  }
+  return "direct";
+}
+
+function bindSessionToProxy(resolved, credentials, clientTool) {
+  return translateSessionId(`opencode-proxy\0${proxyKeyOf(credentials)}\0${resolved || ""}`, clientTool);
+}
+
 export function stableSessionId(credentials) {
   const key = identityKey(credentials);
   const existing = stableOpencodeSessions.get(key);
@@ -208,13 +229,6 @@ export function deriveRequestId(sessionId, body) {
   return OPENCODE_REQUEST_RE.test(id) ? id : generateRequestId();
 }
 
-function normalizeRequestId(value) {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim();
-  if (!normalized || normalized.length > MAX_SESSION_LENGTH) return null;
-  return OPENCODE_REQUEST_RE.test(normalized) ? normalized : null;
-}
-
 function bodyHasSessionHints(body) {
   try {
     if (!body || typeof body !== "object") return false;
@@ -261,7 +275,7 @@ function isMessagesModel(model) {
   return MESSAGES_MODELS.has(baseModelId(model));
 }
 
-function resolveOpencodeSession(body, credentials, providerSessionId, clientTool) {
+function resolveRawOpencodeSession(body, credentials, providerSessionId, clientTool) {
   const headers = credentials?.rawHeaders || {};
   const native = nativeSession(headers);
   if (native) return native;
@@ -275,7 +289,7 @@ function resolveOpencodeSession(body, credentials, providerSessionId, clientTool
   }
 
   const hinted = incoming || normalizeSession(providerSessionId);
-  if (hinted) return translateSessionId(hinted, clientTool);
+  if (hinted) return hinted;
 
   if (credentials?.connectionId || bodyHasSessionHints(body)) {
     let viaManager = null;
@@ -289,21 +303,21 @@ function resolveOpencodeSession(body, credentials, providerSessionId, clientTool
     } catch {
       viaManager = null;
     }
-    if (viaManager) return translateSessionId(viaManager, clientTool);
+    if (viaManager) return viaManager;
   }
 
   return stableSessionId(credentials);
 }
 
+function resolveOpencodeSession(body, credentials, providerSessionId, clientTool) {
+  return bindSessionToProxy(
+    resolveRawOpencodeSession(body, credentials, providerSessionId, clientTool),
+    credentials,
+    clientTool
+  );
+}
+
 function resolveOpencodeRequestId(body, credentials, sessionId) {
-  const raw = credentials?.rawHeaders || {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (key.toLowerCase() === "x-opencode-request") {
-      const normalized = normalizeRequestId(value);
-      if (normalized) return normalized;
-      break;
-    }
-  }
   return deriveRequestId(sessionId, body);
 }
 
@@ -449,7 +463,8 @@ export class OpenCodeExecutor extends BaseExecutor {
   }
 
   async execute(args) {
-    return super.execute({ ...args, credentials: this.prepareRequestCredentials(args) });
+    const pristine = args?.body && typeof args.body === "object" ? structuredClone(args.body) : args?.body;
+    return super.execute({ ...args, body: pristine, credentials: this.prepareRequestCredentials(args) });
   }
 
   buildUrl(model) {
@@ -468,8 +483,7 @@ export class OpenCodeExecutor extends BaseExecutor {
     const isOpencodeDownstream = hasValidOpencodeVersion(downstreamUa);
 
     const session = credentials?.[SESSION_FIELD] || this.prepareRequestCredentials({ credentials })[SESSION_FIELD];
-    const downstreamReq = normalizeRequestId(lower["x-opencode-request"]);
-    const requestId = credentials?.[REQ_FIELD] || downstreamReq || generateRequestId();
+    const requestId = credentials?.[REQ_FIELD] || deriveRequestId(session, null);
 
     const headers = {
       "Content-Type": "application/json",

@@ -1,5 +1,5 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
-import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
+import { resolveConnectionProxyConfig, pickProxyPoolId, advanceFailoverPool, getFailoverIndex } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
@@ -52,7 +52,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       if (strategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
         const poolIds = allPools.filter(p => p.proxyUrl).map(p => p.id);
-        pickedId = pickProxyPoolId(poolIds, strategy, providerId);
+        const role = options?.proxyAttempt === "retry" ? "retry" : "primary";
+        pickedId = pickProxyPoolId(poolIds, strategy, providerId, role);
       }
       const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId || "" });
       return {
@@ -243,7 +244,25 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  * @returns {{ shouldFallback: boolean, cooldownMs: number }}
  */
 export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
-  if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
+  if (!connectionId || connectionId === "noauth") {
+    if (provider && Number(status) === 429) {
+      const providerId = resolveProviderId(provider);
+      const settings = await getSettings();
+      const strategy = (settings.providerStrategies || {})[providerId]?.rotateStrategy || "none";
+      if (strategy === "failover-429") {
+        const allPools = await getProxyPools({ isActive: true });
+        const poolCount = allPools.filter(p => p.proxyUrl).length;
+        if (poolCount > 1 && advanceFailoverPool(poolCount, providerId)) {
+          const nextIndex = getFailoverIndex(providerId);
+          log.info("AUTH", `${providerId} | failover-429 → pool ${nextIndex + 1}/${poolCount} after 429`);
+          return { shouldFallback: true, cooldownMs: 0 };
+        }
+        log.warn("AUTH", `${providerId} | failover-429 exhausted all ${poolCount} pools`);
+        return { shouldFallback: false, cooldownMs: 0 };
+      }
+    }
+    return { shouldFallback: false, cooldownMs: 0 };
+  }
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
   const backoffLevel = conn?.backoffLevel || 0;

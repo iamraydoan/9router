@@ -97,14 +97,41 @@ describe("OpenCode Free Executor Session Resolution", () => {
     expect(executor).not.toHaveProperty("_currentSessionId");
   });
 
-  it("preserves valid native x-opencode-session header case-insensitively", () => {
+  it("binds a native x-opencode-session to the proxy bucket (no raw passthrough)", () => {
     const executor = getExecutor("opencode");
     const valid = "ses_f534dfae8ffeCy4Ee4tLWNygDc";
     const { prepared } = prepare(executor, {
       credentials: makeCredentials({ rawHeaders: { "X-OpenCode-Session": ` ${valid} ` } }),
     });
 
-    expect(prepared._opencodeSession).toBe(valid);
+    expect(prepared._opencodeSession).toMatch(OPENCODE_SESSION_RE);
+    expect(prepared._opencodeSession).not.toBe(valid);
+  });
+
+  it("keeps a native session stable for the same proxy bucket", () => {
+    const executor = getExecutor("opencode");
+    const valid = "ses_f534dfae8ffeCy4Ee4tLWNygDc";
+    const creds = makeCredentials({
+      rawHeaders: { "X-OpenCode-Session": valid },
+      providerSpecificData: { connectionProxyPoolId: "pool-a" },
+    });
+    const first = prepare(executor, { credentials: creds }).prepared._opencodeSession;
+    const second = prepare(executor, { credentials: creds }).prepared._opencodeSession;
+    expect(first).toBe(second);
+  });
+
+  it("derives a different session when the proxy bucket changes", () => {
+    const executor = getExecutor("opencode");
+    const valid = "ses_f534dfae8ffeCy4Ee4tLWNygDc";
+    const forPool = (poolId) => prepare(executor, {
+      credentials: makeCredentials({
+        rawHeaders: { "X-OpenCode-Session": valid },
+        providerSpecificData: { connectionProxyPoolId: poolId },
+      }),
+    }).prepared._opencodeSession;
+
+    expect(forPool("pool-a")).not.toBe(forPool("pool-b"));
+    expect(forPool("pool-a")).toMatch(OPENCODE_SESSION_RE);
   });
 
   it("translates invalid native x-opencode-session header into a valid session", () => {
@@ -260,13 +287,14 @@ describe("OpenCode Stable Session Reuse (429 follow-up)", () => {
     ).not.toBe(first);
   });
 
-  it("preserves a valid downstream x-opencode-request header", () => {
+  it("re-derives x-opencode-request instead of reusing the downstream header", () => {
     const executor = getExecutor("opencode");
     const validReq = "msg_0ae8d9cd3001swxaFbM248jcIF";
     const { prepared } = prepare(executor, {
       credentials: makeCredentials({ rawHeaders: { "x-opencode-request": validReq } }),
     });
-    expect(prepared._opencodeRequest).toBe(validReq);
+    expect(prepared._opencodeRequest).toMatch(OPENCODE_REQUEST_RE);
+    expect(prepared._opencodeRequest).not.toBe(validReq);
   });
 
   it("keeps the standalone buildHeaders session stable across calls", () => {

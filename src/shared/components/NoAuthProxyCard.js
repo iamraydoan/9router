@@ -9,6 +9,7 @@ import Badge from "./Badge";
 const NONE_PROXY_POOL_VALUE = "__none__";
 const STRATEGIES = [
   { value: "none", label: "None (single pool)" },
+  { value: "failover-429", label: "Failover on 429 (rate limit)" },
   { value: "round-robin", label: "Round-robin" },
   { value: "random", label: "Random" },
 ];
@@ -121,8 +122,10 @@ export default function NoAuthProxyCard({ providerId }) {
             : isRotation
               ? rotateStrategy === "round-robin"
                 ? `Rotating through all ${proxyPools.length} active pools in order. State is in-memory (resets on restart).`
-                : `Picking a random pool from ${proxyPools.length} active pools each request.`
-              : `Uses the selected pool above. Set to Round-robin or Random to rotate across all active pools.`}
+                : rotateStrategy === "failover-429"
+                  ? `Stays on one pool until upstream returns 429, then moves to the next of ${proxyPools.length} pools. Each pool keeps its own session fingerprint.`
+                  : `Picking a random pool from ${proxyPools.length} active pools each request.`
+              : `Uses the selected pool above. Set to Failover on 429, Round-robin or Random to rotate across all active pools.`}
         </p>
       </div>
     </Card>

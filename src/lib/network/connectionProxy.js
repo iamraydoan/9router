@@ -8,6 +8,7 @@ function normalizeString(value) {
 
 // ─── Proxy pool rotation state (in-memory) ─────────────────────────
 const rotateState = new Map(); // providerId → { index }
+const failoverState = new Map();
 
 /**
  * Pick one proxy pool ID from a list based on strategy.
@@ -15,7 +16,7 @@ const rotateState = new Map(); // providerId → { index }
  * random:      uniform random pick
  * none/single: return first entry
  */
-export function pickProxyPoolId(poolIds, strategy, providerId) {
+export function pickProxyPoolId(poolIds, strategy, providerId, role = "retry") {
   if (!poolIds || poolIds.length === 0) return null;
   if (poolIds.length === 1) return poolIds[0];
 
@@ -26,11 +27,32 @@ export function pickProxyPoolId(poolIds, strategy, providerId) {
     return poolIds[state.index];
   }
 
+  if (strategy === "failover-429") {
+    const state = failoverState.get(providerId) || { index: 0, strikes: 0 };
+    if (role === "primary") state.strikes = 0;
+    state.index = state.index % poolIds.length;
+    failoverState.set(providerId, state);
+    return poolIds[state.index];
+  }
+
   if (strategy === "random") {
     return poolIds[Math.floor(Math.random() * poolIds.length)];
   }
 
   return poolIds[0]; // "none" or unknown
+}
+
+export function advanceFailoverPool(poolCount, providerId) {
+  if (!poolCount || poolCount < 1) return false;
+  const state = failoverState.get(providerId) || { index: 0, strikes: 0 };
+  state.strikes += 1;
+  state.index = (state.index + 1) % poolCount;
+  failoverState.set(providerId, state);
+  return state.strikes < poolCount;
+}
+
+export function getFailoverIndex(providerId) {
+  return failoverState.get(providerId)?.index || 0;
 }
 
 /**

@@ -242,9 +242,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastError = null;
   let lastStatus = null;
   let lastHeaders = null;
+  let proxyAttempt = "primary";
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model, proxyAttempt });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
@@ -347,6 +348,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       lastError = result.error;
       lastStatus = result.status;
       lastHeaders = upstreamResponseHeaders(result.response?.headers);
+      proxyAttempt = "retry";
       continue;
     }
 
